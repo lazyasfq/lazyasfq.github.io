@@ -1,0 +1,354 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>Trade Simulator</title>
+    <script src="https://telegram.org/js/telegram-web-app.js"></script>
+    <script src="https://unpkg.com/lightweight-charts/dist/lightweight-charts.standalone.production.js"></script>
+    <style>
+        :root {
+            --bg-color: #0f1115;
+            --card-bg: #1e222d;
+            --text-primary: #ffffff;
+            --text-secondary: #8b92a3;
+            --up-color: #0ecb81;
+            --down-color: #f6465d;
+            --accent: #2962ff;
+        }
+
+        body {
+            background-color: var(--bg-color);
+            color: var(--text-primary);
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;
+            margin: 0;
+            padding: 0;
+            overflow: hidden;
+            display: flex;
+            flex-direction: column;
+            height: 100vh;
+        }
+
+        /* Хедер */
+        header {
+            padding: 15px;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            background: var(--card-bg);
+            border-bottom: 1px solid #2a2e39;
+        }
+        .asset-selector { font-weight: 700; font-size: 16px; display: flex; align-items: center; gap: 5px; }
+        .live-status { width: 8px; height: 8px; background: var(--up-color); border-radius: 50%; box-shadow: 0 0 8px var(--up-color); animation: pulse 2s infinite; }
+        .balance-container { text-align: right; }
+        .balance-label { font-size: 10px; color: var(--text-secondary); }
+        .balance-value { font-weight: bold; font-size: 16px; color: var(--up-color); }
+
+        /* График */
+        #chart-container { flex: 1; position: relative; width: 100%; }
+        .current-price-overlay {
+            position: absolute; top: 10px; left: 15px; z-index: 10; font-size: 24px; font-weight: 800;
+        }
+
+        /* Панель управления */
+        .control-panel {
+            background: var(--card-bg);
+            padding: 15px;
+            border-top-left-radius: 20px;
+            border-top-right-radius: 20px;
+            box-shadow: 0 -5px 20px rgba(0,0,0,0.3);
+        }
+
+        .bet-inputs { display: flex; justify-content: space-between; margin-bottom: 15px; gap: 10px; }
+        .input-group { flex: 1; background: var(--bg-color); padding: 8px; border-radius: 8px; text-align: center; }
+        .input-label { font-size: 10px; color: var(--text-secondary); display: block; margin-bottom: 4px; }
+        .input-value { font-size: 16px; font-weight: bold; border: none; background: transparent; color: white; width: 100%; text-align: center; outline: none; }
+
+        .trade-buttons { display: flex; gap: 12px; }
+        .btn {
+            flex: 1; padding: 16px; border-radius: 12px; border: none; font-size: 16px; font-weight: 800; color: white; cursor: pointer;
+            transition: transform 0.1s, opacity 0.2s; display: flex; flex-direction: column; align-items: center; justify-content: center;
+        }
+        .btn:active { transform: scale(0.96); }
+        .btn-up { background: linear-gradient(135deg, #0ecb81 0%, #0a8f5c 100%); box-shadow: 0 4px 15px rgba(14, 203, 129, 0.3); }
+        .btn-down { background: linear-gradient(135deg, #f6465d 0%, #ab3142 100%); box-shadow: 0 4px 15px rgba(246, 70, 93, 0.3); }
+        .btn-small-label { font-size: 10px; opacity: 0.8; font-weight: 400; margin-top: 2px; }
+
+        /* Таб бар (Меню снизу) */
+        .tab-bar {
+            display: flex; justify-content: space-around; background: #15181e; padding: 10px 0; padding-bottom: 20px;
+        }
+        .tab-item { color: var(--text-secondary); font-size: 10px; text-align: center; cursor: pointer; }
+        .tab-item.active { color: var(--accent); }
+        .tab-icon { font-size: 20px; display: block; margin-bottom: 4px; }
+
+        /* Вкладки контента */
+        .tab-content { display: none; height: 100%; padding: 20px; overflow-y: auto; }
+        .tab-content.active { display: block; }
+
+        /* Админка и Профиль стили */
+        .profile-card, .admin-card { background: var(--card-bg); padding: 15px; border-radius: 12px; margin-bottom: 15px; }
+        .full-width-btn { width: 100%; background: var(--accent); color: white; padding: 12px; border-radius: 8px; border: none; font-weight: bold; margin-top: 10px; }
+        
+        .disclaimer { font-size: 9px; color: #444; text-align: center; padding: 5px; margin-top: 5px; }
+        
+        @keyframes pulse { 0% { opacity: 1; } 50% { opacity: 0.5; } 100% { opacity: 1; } }
+        
+        /* Тоаст уведомления */
+        .toast {
+            position: fixed; top: 20px; left: 50%; transform: translateX(-50%);
+            background: rgba(30, 34, 45, 0.9); padding: 10px 20px; border-radius: 20px;
+            color: white; font-size: 14px; opacity: 0; transition: opacity 0.3s; pointer-events: none; z-index: 100;
+            border: 1px solid #333; backdrop-filter: blur(5px);
+        }
+    </style>
+</head>
+<body>
+
+    <div id="toast" class="toast">Уведомление</div>
+
+    <div id="tab-trade" class="tab-content active" style="padding:0; display:flex; flex-direction:column;">
+        <header>
+            <div class="asset-selector">
+                <div class="live-status"></div> BTC/USDT
+            </div>
+            <div class="balance-container">
+                <div class="balance-label">Real Balance (Demo)</div>
+                <div class="balance-value" id="balance-display">$1,000.00</div>
+            </div>
+        </header>
+
+        <div id="chart-container">
+            <div class="current-price-overlay" id="price-overlay">0.00</div>
+        </div>
+
+        <div class="control-panel">
+            <div class="bet-inputs">
+                <div class="input-group">
+                    <span class="input-label">Сумма ($)</span>
+                    <input type="number" id="bet-amount" class="input-value" value="100">
+                </div>
+                <div class="input-group">
+                    <span class="input-label">Время</span>
+                    <div class="input-value" style="font-size: 14px; padding-top:2px;">5 Сек</div>
+                </div>
+                <div class="input-group">
+                    <span class="input-label">Доход</span>
+                    <div class="input-value" style="color: var(--up-color);">80%</div>
+                </div>
+            </div>
+
+            <div class="trade-buttons">
+                <button class="btn btn-up" onclick="placeTrade('up')">
+                    ВВЕРХ
+                    <span class="btn-small-label">CALL</span>
+                </button>
+                <button class="btn btn-down" onclick="placeTrade('down')">
+                    ВНИЗ
+                    <span class="btn-small-label">PUT</span>
+                </button>
+            </div>
+            
+            <div class="disclaimer">
+                ИГРОВОЙ СИМУЛЯТОР. НЕ ЯВЛЯЕТСЯ РЕАЛЬНОЙ БИРЖЕЙ. ВСЕ СРЕДСТВА ВИРТУАЛЬНЫЕ.
+            </div>
+        </div>
+    </div>
+
+    <div id="tab-profile" class="tab-content">
+        <h2>Портфолио</h2>
+        <div class="profile-card">
+            <div style="font-size: 12px; color: #888;">Ваш ID</div>
+            <div style="font-size: 18px; font-weight: bold;" id="user-id-display">Загрузка...</div>
+            <br>
+            <div style="font-size: 12px; color: #888;">Текущий баланс</div>
+            <div style="font-size: 24px; font-weight: bold; color: var(--up-color);" id="profile-balance">0</div>
+        </div>
+        <h3>История сделок</h3>
+        <div id="history-list" style="font-size: 12px; color: #aaa;">
+            <p>Сделок пока нет.</p>
+        </div>
+    </div>
+
+    <div id="tab-admin" class="tab-content">
+        <h2 style="color: var(--accent);">👑 Админ Панель</h2>
+        <div class="admin-card">
+            <label class="input-label">ID Пользователя</label>
+            <input type="number" id="admin-target-id" class="input-value" style="background: #121212; padding: 10px; margin-bottom: 10px;" placeholder="123456789">
+            
+            <label class="input-label">Сумма пополнения ($)</label>
+            <input type="number" id="admin-amount" class="input-value" style="background: #121212; padding: 10px;" placeholder="1000">
+            
+            <button class="full-width-btn" onclick="adminAddMoney()">Выдать монеты</button>
+        </div>
+    </div>
+
+    <div class="tab-bar">
+        <div class="tab-item active" onclick="switchTab('trade')">
+            <span class="tab-icon">📈</span> Торговля
+        </div>
+        <div class="tab-item" onclick="switchTab('profile')">
+            <span class="tab-icon">👤</span> Профиль
+        </div>
+        <div class="tab-item" id="admin-tab-btn" onclick="switchTab('admin')" style="display: none;">
+            <span class="tab-icon">🔒</span> Админка
+        </div>
+    </div>
+
+    <script>
+        // --- КОНФИГУРАЦИЯ ---
+        const ADMIN_ID = 123456789; // ЗАМЕНИ ЭТО НА СВОЙ ID!!!
+        let balance = 1000.00;
+        let currentPrice = 0;
+        
+        const tg = window.Telegram.WebApp;
+        tg.expand();
+        
+        // Получаем ID пользователя
+        const userId = tg.initDataUnsafe?.user?.id || 777; // 777 для теста в браузере
+        document.getElementById('user-id-display').innerText = userId;
+
+        // Проверка админа
+        if (userId === ADMIN_ID) {
+            document.getElementById('admin-tab-btn').style.display = 'block';
+        }
+
+        // --- ГРАФИК (Lightweight Charts) ---
+        const chartContainer = document.getElementById('chart-container');
+        const chart = LightweightCharts.createChart(chartContainer, {
+            layout: { background: { type: 'solid', color: '#0f1115' }, textColor: '#8b92a3' },
+            grid: { vertLines: { color: '#1e222d' }, horzLines: { color: '#1e222d' } },
+            crosshair: { mode: LightweightCharts.CrosshairMode.Normal },
+            rightPriceScale: { visible: false }, // Скрываем шкалу справа для чистоты
+            timeScale: { visible: true, timeVisible: true, secondsVisible: false },
+        });
+
+        const candleSeries = chart.addCandlestickSeries({
+            upColor: '#0ecb81', downColor: '#f6465d', borderVisible: false, wickUpColor: '#0ecb81', wickDownColor: '#f6465d',
+        });
+        
+        // Авто-ресайз графика
+        new ResizeObserver(entries => {
+            if (entries.length === 0 || entries[0].target !== chartContainer) { return; }
+            const newRect = entries[0].contentRect;
+            chart.applyOptions({ height: newRect.height, width: newRect.width });
+        }).observe(chartContainer);
+
+        // --- WEBSOCKET BINANCE (Реальные данные) ---
+        const ws = new WebSocket('wss://stream.binance.com:9443/ws/btcusdt@kline_1m');
+        
+        ws.onmessage = (event) => {
+            const data = JSON.parse(event.data);
+            const k = data.k;
+            
+            const candle = {
+                time: k.t / 1000,
+                open: parseFloat(k.o),
+                high: parseFloat(k.h),
+                low: parseFloat(k.l),
+                close: parseFloat(k.c),
+            };
+            
+            candleSeries.update(candle);
+            currentPrice = candle.close;
+            document.getElementById('price-overlay').innerText = currentPrice.toFixed(2);
+            document.getElementById('price-overlay').style.color = candle.close >= candle.open ? '#0ecb81' : '#f6465d';
+        };
+
+        // --- ИГРОВАЯ ЛОГИКА ---
+        function updateBalanceUI() {
+            document.getElementById('balance-display').innerText = '$' + balance.toFixed(2);
+            document.getElementById('profile-balance').innerText = '$' + balance.toFixed(2);
+        }
+
+        function showToast(msg) {
+            const toast = document.getElementById('toast');
+            toast.innerText = msg;
+            toast.style.opacity = '1';
+            setTimeout(() => toast.style.opacity = '0', 3000);
+        }
+
+        function placeTrade(direction) {
+            const betAmount = parseFloat(document.getElementById('bet-amount').value);
+            
+            if (betAmount > balance) {
+                tg.HapticFeedback.notificationOccurred('error');
+                showToast("Недостаточно средств!");
+                return;
+            }
+
+            // Списываем баланс
+            balance -= betAmount;
+            updateBalanceUI();
+            tg.HapticFeedback.impactOccurred('medium');
+            
+            const entryPrice = currentPrice;
+            showToast(`Сделка открыта: ${direction.toUpperCase()} по ${entryPrice}`);
+
+            // Имитация задержки 5 секунд
+            setTimeout(() => {
+                const exitPrice = currentPrice; // Цена через 5 секунд
+                let win = false;
+                
+                if (direction === 'up' && exitPrice > entryPrice) win = true;
+                if (direction === 'down' && exitPrice < entryPrice) win = true;
+                
+                if (win) {
+                    const profit = betAmount * 1.8;
+                    balance += profit;
+                    tg.HapticFeedback.notificationOccurred('success');
+                    showToast(`🏆 Победа! +$${profit.toFixed(2)}`);
+                    addToHistory(direction, betAmount, profit, "WIN");
+                } else {
+                    tg.HapticFeedback.notificationOccurred('warning');
+                    showToast(`📉 Потеря... -$${betAmount}`);
+                    addToHistory(direction, betAmount, 0, "LOSE");
+                }
+                updateBalanceUI();
+                
+                // В РЕАЛЬНОМ ПРИЛОЖЕНИИ ЗДЕСЬ НУЖНО ОТПРАВИТЬ ЗАПРОС НА СЕРВЕР:
+                // fetch('/api/save_balance', { ... })
+                
+            }, 5000);
+        }
+
+        function addToHistory(dir, bet, res, status) {
+            const list = document.getElementById('history-list');
+            const item = document.createElement('div');
+            item.style.padding = "10px";
+            item.style.borderBottom = "1px solid #333";
+            item.innerHTML = `<b>${dir.toUpperCase()}</b> | Ставка: $${bet} | <span style="color:${status==='WIN'?'#0ecb81':'#f6465d'}">${status}</span>`;
+            list.prepend(item);
+        }
+
+        // --- АДМИНКА ---
+        function adminAddMoney() {
+            const targetId = document.getElementById('admin-target-id').value;
+            const amount = parseFloat(document.getElementById('admin-amount').value);
+            
+            // В реальном приложении это отправляется на сервер
+            // fetch('/api/admin/add_money', ...)
+            
+            if(targetId == userId) {
+                balance += amount;
+                updateBalanceUI();
+            }
+            
+            showToast(`✅ Выдано ${amount}$ пользователю ${targetId}`);
+            tg.sendData(JSON.stringify({action: "add_money", target: targetId, amount: amount}));
+        }
+
+        // --- ВКЛАДКИ ---
+        function switchTab(tabName) {
+            document.querySelectorAll('.tab-content').forEach(el => el.classList.remove('active'));
+            document.querySelectorAll('.tab-item').forEach(el => el.classList.remove('active'));
+            
+            document.getElementById('tab-' + tabName).classList.add('active');
+            // Находим кнопку и делаем активной (простой способ)
+            event.currentTarget.classList.add('active');
+        }
+
+        updateBalanceUI();
+    </script>
+</body>
+</html>
